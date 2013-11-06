@@ -1,0 +1,170 @@
+#!/usr/bin/perl -w
+# (c) aef, 2012 
+# Template compiler
+# -*- coding: utf-8 -*-
+use strict;
+my $VERSION='0.2';
+
+use locale;
+use Data::Dumper;
+use Getopt::Std;
+
+sub HELP_MESSAGE();
+sub VERSION_MESSAGE();
+
+
+my $quoteIn = '<!---';
+my $quoteOut= '--->';
+
+my $inner = 0;
+my $debug = 0;
+my $evaluatedString;
+my %opts;
+
+sub outLine($){
+    return '' if $_[0] eq '' ;
+    my $result = $_[0];
+    #$result =~ s/\\/\\\\/g;
+    $result =~ s/\'/\\\'/g;
+    $result =~ s/\"/\\\"/g;
+    $result =~ s/^\n/\\n/;
+    $result =~ s/\n$/\\n/;
+    $result =~ s/(\$\W+)/\\$1/g;
+    return "print  \"$result\";\n" if $result ne '' ;
+}
+
+sub compileLine($){
+    
+    unless (defined $_[0]){
+	return outLine($evaluatedString);
+    }
+    $_[0] =~  s/^\s*$quoteIn\s*/$quoteIn/;
+    $_[0] =~  s/^\s*$quoteOut\s*/$quoteOut/;
+    $_[0] =~  s/$quoteOut\s*$/$quoteOut/;
+    my @res =  split /($quoteIn|$quoteOut)/, $_[0];
+    my $result = '';
+    my $i;
+
+    foreach $i (@res){
+	if($i eq $quoteIn){
+	    $result .= outLine($evaluatedString);
+	    $evaluatedString='';
+	    $inner = 1;
+	    next;
+	}
+	if($i eq $quoteOut){
+	    #print STDERR "Evaluate before ",Dumper($evaluatedString);
+	    if($evaluatedString =~ /^!/){
+		$evaluatedString =~ s/^!\s*//;
+		$evaluatedString =~ s/s*$//m;
+		#print STDERR "Evaluate before ",Dumper($evaluatedString);
+		local $_ = eval $evaluatedString;
+		warn $@ if $@;
+		#print STDERR "Evaluate after ",Dumper([$evaluatedString, $_]);
+		$result .= $_;
+	    } else {
+		$result .= $evaluatedString ."\n";
+	    }
+	    $inner = 0;
+	    $evaluatedString='';
+	    next;
+	}
+	$evaluatedString .= $i;
+    }
+    
+    return $result;
+		 }
+
+sub parseHtml($){
+    print STDERR "parseHtml \'$_[0]\'\n" if $debug;
+    my $fh;
+    open($fh,$_[0]) or die "Can not open file $_[0] : $! \n";
+    my $i;
+    my $ret="";
+    my $buffer;
+    my $old_inner = $inner;
+    my $old_eva = $evaluatedString;
+    $evaluatedString='';
+    $inner = 0;
+    while($i = <$fh>){
+	$ret .= compileLine($i);
+    }
+    close($fh);
+    $ret  .= compileLine(undef);
+    $inner = $old_inner;
+    $evaluatedString = $old_eva;
+
+    return $ret;
+}
+
+sub parsePerl($){
+    my $fh;
+    my $ret='';
+    print STDERR "parsePerl \'$_[0]\'\n" if $debug;
+    open($fh,$_[0]) or die "Can not open file $_[0] : $! \n";
+    
+    while(<$fh>){
+	if( /^.*#parseHtml\s+\'(.*)\'/) {
+	    my $fname = $1;
+	
+	    $ret .= "# templateBegin $fname\n" if $debug;
+	    $ret .= parseHtml($fname);
+	    warn $@ if $@;
+	    $ret .= "# templateEnd $fname\n" if $debug;
+	} else {
+	    $ret .= $_;
+	}
+    }
+    close($fh);
+    return $ret;
+}    
+sub reopenStdout($){
+    close(STDOUT);
+    open(STDOUT,'>'. $_[0]) or die "Can not open file $_[0] : $! \n";
+}
+
+getopts('dhVt:o:',\%opts);
+$debug=1 if( defined $opts{'d'});
+
+HELP_MESSAGE() if( defined $opts{'h'});
+VERSION_MESSAGE() if( defined $opts{'V'});
+
+reopenStdout($opts{'o'}) if( defined $opts{'o'});
+
+if( defined $opts{'t'}){
+    print parseHtml($opts{'t'});
+    exit 0;
+}
+foreach (@ARGV){
+    print parsePerl($_);
+}
+
+
+sub VERSION_MESSAGE(){
+    print STDERR "tplc version $VERSION\n";
+}
+
+sub HELP_MESSAGE(){
+    print STDERR <<EOF;
+Usage:
+    tplc [-d] [-o outfile] perlfile1 perlfile2 ..
+    tplc [-d] [-o outfile] -t htmlfile
+    tplc [-hV]
+
+tplc takes file with references to templates and provide perl code with compiled-in templates.
+
+perl_file is a correct perl file with directives like 
+#parseHtml './template.html'
+
+Template file - is a HTML file with embedded Perl code.
+Perl code should be escaped between '$quoteIn' and '$quoteOut' :
+  $quoteIn print "Hello" $quoteOut
+Text may contains perl-variables:
+  <p>\$perl_var</p>
+
+See README for details
+
+EOF
+exit 1 ;
+}
+

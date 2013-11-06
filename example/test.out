@@ -1,0 +1,10 @@
+#!/usr/bin/perl -w
+#
+# perl before
+#
+print  "html before\n";
+=pod 
+print  "    This is a HTML-only code\n";
+=cut 
+print  "html after\n";
+# perl after
